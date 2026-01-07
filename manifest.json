@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "X Thread Extractor",
+  "version": "0.1.0",
+  "description": "Extract and analyze X.com conversation threads with DOM-based extraction",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Extract Thread"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}

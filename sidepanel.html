@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>X Thread Extractor</title>
+
+  <!-- Distinctive font pairing: Newsreader (editorial serif) + IBM Plex Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@200;400;700&family=IBM+Plex+Mono:wght@300;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <h1 class="app-title">Thread Extractor</h1>
+      <p class="app-subtitle">Extract & analyze X.com conversations</p>
+    </header>
+
+    <!-- Configuration Panel -->
+    <section class="config-panel">
+      <div class="config-header">
+        <h2 class="section-title">Configuration</h2>
+        <span class="page-status" id="pageStatus">
+          <span class="status-indicator" id="statusIndicator">○</span>
+          <span class="status-text" id="statusText">Checking...</span>
+        </span>
+      </div>
+      <div class="config-content">
+        <div class="config-field">
+          <label for="maxDepth" class="config-label">Max Depth</label>
+          <input
+            type="number"
+            id="maxDepth"
+            min="1"
+            max="5"
+            value="2"
+            class="config-input"
+          >
+          <span class="config-hint">Levels of replies to extract (1-5)</span>
+        </div>
+
+        <div class="config-actions">
+          <div class="btn-wrapper">
+            <button id="startBtn" class="btn btn-primary">
+              <span class="btn-icon">▶</span>
+              Start Extraction
+            </button>
+            <div class="tooltip" id="startBtnTooltip">
+              Navigate to an X.com post to begin extraction
+            </div>
+          </div>
+          <button id="stopBtn" class="btn btn-secondary" disabled>
+            <span class="btn-icon">■</span>
+            Stop
+          </button>
+        </div>
+        <div class="config-message" id="configMessage" style="display: none;">
+          <span class="message-icon">ℹ️</span>
+          <span class="message-text">Navigate to an X.com post to begin extraction</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Progress Panel -->
+    <section class="progress-panel" id="progressPanel" style="display: none;">
+      <div class="progress-header">
+        <h2 class="section-title">Progress</h2>
+        <span class="progress-badge" id="progressBadge">Idle</span>
+      </div>
+      <div class="progress-content">
+        <div class="progress-stat">
+          <span class="stat-label">Posts Extracted</span>
+          <span class="stat-value" id="postsCount">0</span>
+        </div>
+        <div class="progress-stat">
+          <span class="stat-label">Current Phase</span>
+          <span class="stat-value" id="currentPhase">—</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Results Panel -->
+    <section class="results-panel" id="resultsPanel" style="display: none;">
+      <div class="results-header">
+        <h2 class="section-title">Results</h2>
+        <div class="export-actions">
+          <button id="exportJson" class="btn btn-export" title="Export as JSON">
+            JSON
+          </button>
+          <button id="exportMarkdown" class="btn btn-export" title="Export as Markdown">
+            MD
+          </button>
+          <button id="exportText" class="btn btn-export" title="Export as Plain Text">
+            TXT
+          </button>
+        </div>
+      </div>
+
+      <!-- View Toggle -->
+      <div class="view-toggle">
+        <button id="treeViewBtn" class="toggle-btn active">Tree View</button>
+        <button id="jsonViewBtn" class="toggle-btn">JSON View</button>
+      </div>
+
+      <!-- Tree View -->
+      <div class="view-container" id="treeViewContainer">
+        <thread-tree-view id="treeView"></thread-tree-view>
+      </div>
+
+      <!-- JSON View -->
+      <div class="view-container" id="jsonViewContainer" style="display: none;">
+        <json-viewer id="jsonView"></json-viewer>
+      </div>
+    </section>
+
+    <!-- Empty State -->
+    <div class="empty-state" id="emptyState">
+      <div class="empty-state-icon">⚡</div>
+      <h3 class="empty-state-title">Ready to Extract</h3>
+      <p class="empty-state-text">
+        Navigate to an X.com post and click "Start Extraction" to begin capturing the conversation thread.
+      </p>
+    </div>
+  </div>
+
+  <!-- Load modules -->
+  <script type="module" src="sidepanel.js"></script>
+  <script type="module" src="components/tree-view.js"></script>
+  <script type="module" src="components/json-viewer.js"></script>
+</body>
+</html>

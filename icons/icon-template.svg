@@ -1,0 +1,16 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="128" height="128" rx="24" fill="#1a1714"/>
+
+  <!-- Lightning bolt icon representing extraction -->
+  <path d="M 70 20 L 45 65 L 60 65 L 50 108 L 85 60 L 68 60 L 70 20 Z"
+        fill="#f59e0b"
+        stroke="#d97706"
+        stroke-width="2"/>
+
+  <!-- Optional: Small thread lines -->
+  <circle cx="35" cy="35" r="3" fill="#92400e" opacity="0.6"/>
+  <circle cx="35" cy="50" r="3" fill="#92400e" opacity="0.6"/>
+  <circle cx="35" cy="65" r="3" fill="#92400e" opacity="0.6"/>
+  <line x1="35" y1="35" x2="35" y2="65" stroke="#92400e" stroke-width="2" opacity="0.4"/>
+</svg>

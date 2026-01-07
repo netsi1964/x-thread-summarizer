@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+._.DS_Store
+**/.DS_Store
+**/._.DS_Store
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test data
+data/
+
+# Node modules (if you later add npm)
+node_modules/
