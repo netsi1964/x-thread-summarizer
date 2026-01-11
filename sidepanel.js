@@ -37,12 +37,12 @@ class ThreadExtractorUI {
     this.checkPageStatus();
 
     // Re-check status when side panel regains focus
-    window.addEventListener('focus', () => {
+    globalThis.addEventListener('focus', () => {
       this.checkPageStatus();
     });
 
     // Listen for tab updates
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    chrome.tabs.onUpdated.addListener((_tabId, changeInfo, _tab) => {
       if (changeInfo.url) {
         this.checkPageStatus();
       }
@@ -187,6 +187,15 @@ class ThreadExtractorUI {
     }
 
     try {
+      // Confirmation before overwriting
+      if (this.extractedData && !this.isRunning) {
+        const confirmMsg = "Vil du starte en ny opsamling? Dette vil overskrive de data, du har i øjeblikket.\n\n" + 
+                          "Do you want to start a new extraction? This will overwrite your current data.";
+        if (!confirm(confirmMsg)) {
+          return;
+        }
+      }
+
       await chrome.tabs.sendMessage(tab.id, {
         type: 'START_EXTRACTION',
         maxDepth
@@ -195,8 +204,39 @@ class ThreadExtractorUI {
       this.setRunningState(true);
       this.showProgressPanel();
     } catch (error) {
-      console.error('Error starting extraction:', error);
-      alert('Error: ' + error.message);
+      console.error('Initial extraction start failed:', error);
+      
+      // If error is "Could not establish connection", the content script might be orphaned
+      if (error.message.includes('Could not establish connection') || error.message.includes('Receiving end does not exist')) {
+        console.log('[X Thread Extractor] Connection failed. Attempting to re-inject content script...');
+        this.elements.currentPhase.textContent = 'Re-initializing extension...';
+        
+        try {
+          // Re-inject content script - This fixes the "Receiving end does not exist" error after reload
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content.js']
+          });
+          
+          // Wait a bit for initialization
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Try sending the message again
+          await chrome.tabs.sendMessage(tab.id, {
+            type: 'START_EXTRACTION',
+            maxDepth
+          });
+          
+          this.setRunningState(true);
+          this.showProgressPanel();
+          return; // Success!
+        } catch (injectError) {
+          console.error('Re-injection failed:', injectError);
+          alert('Error: Could not re-initialize extension. Please refresh the X.com page and try again.\n\nFejl: Kunne ikke genstarte udvidelsen. Genindlæs venligst siden og prøv igen.');
+        }
+      } else {
+        alert('Error: ' + error.message);
+      }
     }
   }
 
@@ -241,6 +281,13 @@ class ThreadExtractorUI {
     this.elements.postsCount.textContent = data.postsCount;
     this.elements.currentPhase.textContent = data.phase;
     this.elements.currentPhase.style.color = ''; // Reset color
+
+    // If we have live data, update the UI
+    if (data.liveData) {
+      this.extractedData = data.liveData;
+      this.showResultsPanel();
+      this.renderResults();
+    }
 
     // Animate progress bar
     const progress = Math.min(100, (data.postsCount / 50) * 100);

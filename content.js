@@ -8,7 +8,38 @@ class ThreadExtractor {
     this.rootPostId = null;
     this.maxDepth = 2;
     this.scrollAttempts = 0;
-    this.maxScrollAttempts = 20;
+    this.maxScrollAttempts = 20; // Default
+    this.scrollStep = 1000;
+    this.isArticleMode = false;
+    this.targetReplyCount = 0;
+    this.throttleCount = 0;
+  }
+
+  // Robust number parser for metrics
+  parseMetricValue(text) {
+    if (!text) return 0;
+    
+    const cleaned = text.trim().toLowerCase();
+    
+    // Check for suffix
+    let multiplier = 1;
+    // 'k' for kilo, 't' for Danish 'tusind', 'm' for million
+    if (cleaned.includes('k') || cleaned.endsWith('t')) multiplier = 1000;
+    else if (cleaned.includes('m')) multiplier = 1000000;
+    
+    // Extract numeric part
+    let numStr = cleaned.replace(/[^\d,.]/g, '');
+    
+    if (multiplier > 1) {
+      // For values with suffixes, treat first comma/dot as decimal separator
+      numStr = numStr.replace(',', '.');
+      const val = parseFloat(numStr);
+      return isNaN(val) ? 0 : Math.round(val * multiplier);
+    } else {
+      // For large raw numbers, treat commas/dots as thousand separators
+      numStr = numStr.replace(/[,.]/g, '');
+      return parseInt(numStr, 10) || 0;
+    }
   }
 
   // Extract post ID from URL
@@ -19,7 +50,7 @@ class ThreadExtractor {
 
   // Get root post ID from current URL
   getRootPostId() {
-    const url = window.location.href;
+    const url = globalThis.location.href;
     console.log('[X Thread Extractor] Current URL:', url);
     const postId = this.extractPostId(url);
     console.log('[X Thread Extractor] Extracted post ID:', postId);
@@ -29,14 +60,17 @@ class ThreadExtractor {
   // Extract post data from article element
   extractPostData(article) {
     try {
+      // Detect if this is an X Article (Long post)
+      // Articles typically have a different structure than tweets
+      const isArticle = article.querySelector('h1, h2, [role="heading"]') && 
+                        !article.querySelector('[data-testid="tweetText"]');
+
       // Extract permalink to get post ID
       const timeElement = article.querySelector('time');
       const linkElement = timeElement?.closest('a');
-      const permalink = linkElement?.href;
+      const permalink = linkElement?.href || globalThis.location.href;
 
-      if (!permalink) return null;
-
-      const id = this.extractPostId(permalink);
+      const id = this.extractPostId(permalink) || this.rootPostId;
       if (!id) return null;
 
       // Extract author information
@@ -46,31 +80,80 @@ class ThreadExtractor {
       const displayName = displayNameElement?.textContent || handle;
 
       // Extract timestamp
-      const timestamp = timeElement?.getAttribute('datetime');
+      const timestamp = timeElement?.getAttribute('datetime') || new Date().toISOString();
 
       // Extract text content
-      const textContainer = article.querySelector('[data-testid="tweetText"]');
-      const text = textContainer?.textContent || '';
+      let text = '';
+      if (isArticle) {
+        // Use specific selectors for article title and body
+        const titleEl = article.querySelector('[data-testid="twitter-article-title"]') || 
+                      article.querySelector('h1, h2, [role="heading"]');
+        const title = titleEl?.textContent.trim() || '';
+        
+        const bodyContainer = article.querySelector('[data-testid="longformRichTextComponent"]');
+        let paragraphs = [];
+        
+        if (bodyContainer) {
+          // Extract text from the specific body container
+          paragraphs = Array.from(bodyContainer.querySelectorAll('div, p'))
+            .filter(el => {
+              // Only take elements that are largely text and don't contain other paragraphs
+              if (el.querySelector('p')) return false; 
+              return el.textContent.trim().length > 0;
+            })
+            .map(el => el.textContent.trim());
+        } else {
+          // Fallback if the specific test-id is missing
+          paragraphs = Array.from(article.querySelectorAll('div, p'))
+            .filter(el => {
+              if (el.closest('[role="group"]') || el.closest('[data-testid="group"]')) return false;
+              if (el.getAttribute('aria-hidden') === 'true') return false;
+              if (el.tagName.startsWith('H') || el.getAttribute('role') === 'heading') return false;
+              return true;
+            })
+            .map(el => el.textContent.trim())
+            .filter(t => t.length > 20);
+        }
+        
+        const uniqueParagraphs = [...new Set(paragraphs)];
+        text = title ? `# ${title}\n\n` : '';
+        text += uniqueParagraphs.join('\n\n');
+      } else {
+        const textContainer = article.querySelector('[data-testid="tweetText"]');
+        text = textContainer?.textContent || '';
+      }
 
       // Extract engagement metrics
-      const metricsContainer = article.querySelector('[role="group"]');
       const metrics = {
         replies: 0,
         reposts: 0,
         likes: 0
       };
 
-      if (metricsContainer) {
-        const buttons = metricsContainer.querySelectorAll('[role="button"]');
-        buttons.forEach((button) => {
-          const ariaLabel = button.getAttribute('aria-label') || '';
-          const match = ariaLabel.match(/(\d+)/);
-          const count = match ? parseInt(match[1], 10) : 0;
+      // Find metric buttons by data-testid or aria-label
+      const replyBtn = article.querySelector('[data-testid="reply"]');
+      const retweetBtn = article.querySelector('[data-testid="retweet"], [data-testid="unretweet"]');
+      const likeBtn = article.querySelector('[data-testid="like"], [data-testid="unlike"]');
 
-          if (ariaLabel.includes('repl')) metrics.replies = count;
-          else if (ariaLabel.includes('repost')) metrics.reposts = count;
-          else if (ariaLabel.includes('like')) metrics.likes = count;
-        });
+      if (replyBtn) metrics.replies = this.parseMetricValue(replyBtn.textContent || replyBtn.getAttribute('aria-label'));
+      if (retweetBtn) metrics.reposts = this.parseMetricValue(retweetBtn.textContent || retweetBtn.getAttribute('aria-label'));
+      if (likeBtn) metrics.likes = this.parseMetricValue(likeBtn.textContent || likeBtn.getAttribute('aria-label'));
+
+      // If we still have 0, try the role="group" fallback
+      if (metrics.replies === 0 && metrics.reposts === 0 && metrics.likes === 0) {
+        const metricsContainer = article.querySelector('[role="group"]');
+        if (metricsContainer) {
+          const buttons = metricsContainer.querySelectorAll('[role="button"], a[role="link"]');
+          buttons.forEach((button) => {
+            const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+            const testId = button.getAttribute('data-testid');
+            const val = this.parseMetricValue(button.textContent || ariaLabel);
+
+            if (testId === 'reply' || ariaLabel.includes('repl')) metrics.replies = val;
+            else if (testId && (testId.includes('retweet') || testId.includes('repost')) || ariaLabel.includes('repost')) metrics.reposts = val;
+            else if (testId === 'like' || ariaLabel.includes('like')) metrics.likes = val;
+          });
+        }
       }
 
       return {
@@ -81,7 +164,8 @@ class ThreadExtractor {
         permalink,
         metrics,
         parentId: null,
-        depth: 0
+        depth: 0,
+        isArticle
       };
     } catch (error) {
       console.error('Error extracting post data:', error);
@@ -93,7 +177,7 @@ class ThreadExtractor {
   computeDepth(article) {
     // Root post is typically in the main timeline
     // Replies are nested in different sections
-    const isMainPost = article.closest('[data-testid="primaryColumn"]');
+    // const isMainPost = article.closest('[data-testid="primaryColumn"]');
     const replyLevel = article.closest('[data-testid="cellInnerDiv"]');
 
     if (!replyLevel) return 0;
@@ -114,14 +198,15 @@ class ThreadExtractor {
   // Extract root post specifically
   extractRootPost() {
     // Try multiple strategies to find the root post
-    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    const articles = document.querySelectorAll('article'); // Notice: removed [data-testid="tweet"] for articles
 
     for (const article of articles) {
       const postData = this.extractPostData(article);
       if (postData && postData.id === this.rootPostId) {
         postData.depth = 0;
         this.extractedPosts.set(postData.id, postData);
-        console.log('Root post found:', postData.id);
+        if (postData.isArticle) this.isArticleMode = true;
+        console.log('Root post found:', postData.id, postData.isArticle ? '(Article)' : '(Tweet)');
         return true;
       }
     }
@@ -136,6 +221,7 @@ class ThreadExtractor {
             postData.depth = 0;
             postData.id = this.rootPostId;
             this.extractedPosts.set(postData.id, postData);
+            if (postData.isArticle) this.isArticleMode = true;
             console.log('Root post found via fallback:', postData.id);
             return true;
           }
@@ -149,12 +235,17 @@ class ThreadExtractor {
 
   // Extract all visible posts
   extractVisiblePosts() {
-    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    // Collect both articles and cellInnerDivs to be safe
+    const containers = document.querySelectorAll('article, [data-testid="cellInnerDiv"]');
     let newPostsCount = 0;
 
-    articles.forEach((article) => {
+    containers.forEach(container => {
+      // If it's a cellInnerDiv, we want the article inside it
+      const article = container.tagName === 'ARTICLE' ? container : container.querySelector('article');
+      if (!article) return;
+
       const postData = this.extractPostData(article);
-      if (postData && !this.extractedPosts.has(postData.id)) {
+      if (postData && postData.id && !this.extractedPosts.has(postData.id)) {
         // Compute depth
         postData.depth = postData.id === this.rootPostId ? 0 : this.computeDepth(article);
 
@@ -172,32 +263,72 @@ class ThreadExtractor {
 
   // Click "Show replies" / "Show more" buttons
   async expandReplies() {
-    const expandButtons = document.querySelectorAll('[role="button"]');
-    let clicked = false;
+    const expandButtons = document.querySelectorAll('[role="button"], [data-testid*="replies_pivot"]');
+    let clickedCount = 0;
 
     for (const button of expandButtons) {
       const text = button.textContent.toLowerCase();
-      if (text.includes('show') && (text.includes('repl') || text.includes('more'))) {
+      const testId = button.getAttribute('data-testid') || '';
+      
+      // Handle "Show replies", "Show more", "Læs svar", and pivots
+      if (testId.includes('replies_pivot') || 
+          ((text.includes('show') || text.includes('read') || text.includes('læs')) && 
+           (text.includes('repl') || text.includes('more') || text.includes('svar')))) {
+        
+        // Ensure it's not a button we already tried
+        if (button.dataset.extractorClicked) continue;
+        
+        console.log('[X Thread Extractor] Clicking expand button:', text || testId);
         button.click();
-        clicked = true;
-        await this.sleep(300);
+        button.dataset.extractorClicked = 'true';
+        clickedCount++;
+        await this.sleep(1000); // Wait longer for pivots to load content
       }
     }
 
-    return clicked;
+    return clickedCount > 0;
   }
 
   // Scroll to load more content
+  // Check if we should stop scrolling (e.g. at bottom or spam marker found)
+  isEndOfContent() {
+    const afterHeight = document.documentElement.scrollHeight;
+    const currentScroll = globalThis.scrollY + globalThis.innerHeight;
+    const isAtBottom = currentScroll >= afterHeight - 200;
+
+    // Check for "Show probable spam" or localized variants
+    const spamMarkers = ["Show probable spam", "Vis muligt spam", "Visa sannolik skräppost"];
+    const hasSpamMarker = Array.from(document.querySelectorAll('span, div, button')).some(el => 
+      spamMarkers.some(marker => el.textContent.includes(marker))
+    );
+
+    if (hasSpamMarker) {
+      console.log('[X Thread Extractor] Spam marker detected - stopping scroll');
+      return true;
+    }
+
+    return isAtBottom;
+  }
+
+  // Scroll page function - Overhauled to use window/document level scrolling
   async scrollPage() {
-    const scrollContainer = document.querySelector('[data-testid="primaryColumn"]');
-    if (!scrollContainer) return false;
+    // Scroll the entire window - this is what makes it visible and works on X Articles
+    globalThis.scrollBy({
+      top: this.isArticleMode ? 2500 : 1000,
+      behavior: 'smooth'
+    });
+    
+    // Wait for scroll and potential content load
+    await this.sleep(1500);
+    
+    const isEnd = this.isEndOfContent();
+    const afterHeight = document.documentElement.scrollHeight;
+    const currentScroll = globalThis.scrollY + globalThis.innerHeight;
 
-    const beforeHeight = scrollContainer.scrollHeight;
-    scrollContainer.scrollBy(0, 1000);
-    await this.sleep(500);
-
-    const afterHeight = scrollContainer.scrollHeight;
-    return afterHeight > beforeHeight;
+    console.log(`[X Thread Extractor] Scrolling... Pos: ${Math.round(currentScroll)}/${afterHeight} (At end: ${isEnd})`);
+    
+    // Return true if we should CONTINUE scrolling
+    return !isEnd;
   }
 
   // Sleep utility
@@ -207,12 +338,37 @@ class ThreadExtractor {
 
   // Send progress update
   sendProgress(phase, postsCount) {
+    let liveData = null;
+    
+    // Only build tree periodically to avoid heavy overhead during scroll
+    this.throttleCount++;
+    if (this.throttleCount >= 3 || phase.includes('Complete') || phase.includes('Error')) {
+      try {
+        const tree = this.buildTree();
+        const allPosts = Array.from(this.extractedPosts.values());
+        const prunedByDepth = allPosts.filter(p => p.depth > (this.lastMaxDepth || 2)).length;
+        
+        liveData = {
+          root: tree,
+          stats: {
+            postsTotal: this.extractedPosts.size,
+            postsPrunedByDepth: prunedByDepth,
+            targetReached: this.targetReplyCount > 0 && this.extractedPosts.size >= this.targetReplyCount
+          }
+        };
+        this.throttleCount = 0;
+      } catch (e) {
+        console.warn('Could not build live tree:', e);
+      }
+    }
+
     chrome.runtime.sendMessage({
       type: 'EXTRACTION_PROGRESS',
       data: {
         phase,
         postsCount,
-        isRunning: this.isRunning
+        isRunning: this.isRunning,
+        liveData
       }
     });
   }
@@ -233,7 +389,7 @@ class ThreadExtractor {
         author: { handle: 'unknown', displayName: '[Root Post Not Found]' },
         timestamp: new Date().toISOString(),
         text: '⚠️ Root post could not be extracted from the page. This may happen if the post structure is different. The replies below were successfully captured.',
-        permalink: window.location.href,
+        permalink: globalThis.location.href,
         metrics: { replies: posts.length, reposts: 0, likes: 0 },
         parentId: null,
         depth: 0,
@@ -247,13 +403,12 @@ class ThreadExtractor {
     // Build parent-child relationships (best effort)
     const postMap = new Map(posts.map(p => [p.id, { ...p, children: [] }]));
 
-    // For V0, we use simple heuristics:
-    // - Posts with depth 1 are likely replies to root
-    // - Posts with depth 2+ are replies to depth 1 posts (best guess)
     posts.forEach(post => {
       if (post.id === this.rootPostId) return;
 
       const node = postMap.get(post.id);
+      if (!node) return;
+
       if (post.depth === 1) {
         // Direct reply to root
         node.parentId = this.rootPostId;
@@ -272,6 +427,14 @@ class ThreadExtractor {
           node.parentId = this.rootPostId;
           postMap.get(this.rootPostId).children.push(node);
         }
+      } else {
+        // Depth is 0 but it's not root - likely a misplaced reply
+        // Or if we are in Article Mode, any post found that isn't the root is likely a reply
+        node.parentId = this.rootPostId;
+        const rootNode = postMap.get(this.rootPostId);
+        if (rootNode) {
+          rootNode.children.push(node);
+        }
       }
     });
 
@@ -284,6 +447,7 @@ class ThreadExtractor {
     this.maxDepth = maxDepth;
     this.extractedPosts.clear();
     this.scrollAttempts = 0;
+    this.maxScrollAttempts = 20;
 
     // Get root post ID
     this.rootPostId = this.getRootPostId();
@@ -301,6 +465,17 @@ class ThreadExtractor {
       await this.sleep(1000); // Wait for page to load
 
       this.extractRootPost();
+      
+      const rootPost = this.extractedPosts.get(this.rootPostId);
+      if (rootPost && rootPost.metrics && rootPost.metrics.replies) {
+        this.targetReplyCount = rootPost.metrics.replies;
+        console.log(`[X Thread Extractor] Target reply count identified: ${this.targetReplyCount}`);
+      }
+      
+      if (this.isArticleMode) {
+        console.log('[X Thread Extractor] Article Mode detected - increasing scroll limits');
+        this.maxScrollAttempts = 80; // Even more attempts for 90k text
+      }
 
       // Then extract all other posts
       this.sendProgress('Extracting visible posts', this.extractedPosts.size);
@@ -322,11 +497,17 @@ class ThreadExtractor {
         const newPosts = this.extractVisiblePosts();
         this.sendProgress('Parsing new posts', this.extractedPosts.size);
 
-        // Stop if no new content
+        // Stop if no new content or reached target
         if (newPosts === 0 && !scrolled) {
           this.scrollAttempts++;
         } else {
           this.scrollAttempts = 0;
+        }
+
+        // Target-based termination
+        if (this.targetReplyCount > 0 && this.extractedPosts.size >= this.targetReplyCount) {
+          console.log(`[X Thread Extractor] Target reached (${this.extractedPosts.size}/${this.targetReplyCount}) - finishing up.`);
+          break;
         }
 
         await this.sleep(300);
@@ -351,7 +532,7 @@ class ThreadExtractor {
           schemaVersion: '1.0',
           source: {
             platform: 'x.com',
-            rootUrl: window.location.href,
+            rootUrl: globalThis.location.href,
             capturedAt: new Date().toISOString(),
             maxDepth,
             mode: 'dom'
@@ -384,7 +565,7 @@ class ThreadExtractor {
               schemaVersion: '1.0',
               source: {
                 platform: 'x.com',
-                rootUrl: window.location.href,
+                rootUrl: globalThis.location.href,
                 capturedAt: new Date().toISOString(),
                 maxDepth,
                 mode: 'dom'
@@ -430,7 +611,7 @@ class ThreadExtractor {
 const extractor = new ThreadExtractor();
 
 // Listen for messages from side panel
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'START_EXTRACTION') {
     extractor.startExtraction(message.maxDepth);
     sendResponse({ success: true });
